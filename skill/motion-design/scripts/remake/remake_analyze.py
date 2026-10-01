@@ -31,6 +31,7 @@ for i in range(0, len(frames), 6):
     thumbs.append((i, im))
 cols = 10
 from PIL import ImageDraw
+(H / "ref/sheet").mkdir(parents=True, exist_ok=True)
 for page in range(0, len(thumbs), 80):
     chunk = thumbs[page:page + 80]
     rows = (len(chunk) + cols - 1) // cols

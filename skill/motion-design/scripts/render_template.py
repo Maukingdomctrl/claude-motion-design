@@ -1,5 +1,5 @@
 """Render film.html frame by frame.
-probe t1 t2 ... -> probe/sheet.png | beats -> one frame per beat | full -> N subframes/frame blended with tmix -> out/video.mp4 | pops [video] -> single-frame pop scan.
+probe t1 t2 ... -> probe/sheet.png | beats -> one frame per beat, beats/beats.png | full -> N subframes/frame blended with tmix -> out/video.mp4 | pops [video] -> single-frame pop scan.
 Serve the folder first: python -m http.server 8000. Options (defaults = the Howseen LinkedIn 4:5 film):
   --size 1080x1350  --fps 60  --duration 24  --subframes 8  --crf 14  --url http://localhost:8000/film.html (or FILM_URL)
   --bpm 120 --beat-offset 0.45 (beats)  --work-dir sub (full; use one per version so parallel renders don't clash)
@@ -59,15 +59,15 @@ def sheet(folder, pattern, n, out, cols=4, size=360):
                     f"scale={size}:-1,tile={cols}x{rows}:padding=6:color=white", "-frames:v", "1", str(out)], check=True)
 
 
-async def probe(times, name="sheet.png", cols=4):
-    out = HERE / "probe"; shutil.rmtree(out, ignore_errors=True); out.mkdir()
+async def probe(times, folder="probe", name="sheet.png", cols=4):
+    out = HERE / folder; shutil.rmtree(out, ignore_errors=True); out.mkdir()
     async with async_playwright() as p:
         b, pg, errs = await open_page(p)
         for i, t in enumerate(times): await shot(pg, t, out / f"p_{i:03d}.png")
         await b.close()
     if errs: print("PAGE ERRORS:", errs[:8])
     sheet(out, "p_%03d.png", len(times), out / name, cols=cols)
-    print("probe:", len(times), "->", out / name)
+    print(f"{folder}:", len(times), "->", out / name)
 
 
 def beat_times():
@@ -111,6 +111,6 @@ def pops(path=None):
 
 if __name__ == "__main__":
     if A.cmd == "probe": asyncio.run(probe([float(x) for x in A.args]))
-    elif A.cmd == "beats": asyncio.run(probe(beat_times(), "beats.png", cols=9))
+    elif A.cmd == "beats": asyncio.run(probe(beat_times(), "beats", "beats.png", cols=9))
     elif A.cmd == "full": asyncio.run(full())
     elif A.cmd == "pops": pops(A.args[0] if A.args else None)

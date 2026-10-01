@@ -1,8 +1,11 @@
 /* core.js — shared, deterministic helpers for the frame-locked remake.
    Everything is a PURE function of the global frame F (24 fps). No timers, no Date, no Math.random.
-   Shot files register with SHOT({id, f0, f1, render(lf, F)}) and return an HTML string for the 1920x1080 stage. */
+   Shot files register with SHOT({id, f0, f1, render(lf, F)}) and return an HTML string for the W x H stage.
+   FPS and stage size come from window.REMAKE (ref/meta.js, written by remake_analyze.py); default 24 fps, 1920x1080. */
 (function () {
-  const FPS = 24, W = 1920, H = 1080;
+  const { fps: FPS = 24, w: W = 1920, h: H = 1080 } = window.REMAKE || {};
+  const stage = document.getElementById('stage');
+  if (stage) { stage.style.width = W + 'px'; stage.style.height = H + 'px'; }
   const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
   const lerp = (a, b, t) => a + (b - a) * t;
   const inv = (a, b, x) => clamp((x - a) / (b - a));

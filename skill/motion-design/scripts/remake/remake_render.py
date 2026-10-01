@@ -4,25 +4,27 @@ usage:
   render.py compare OUT F1 F2 ...      -> OUT/c_FNNNN.jpg (ref | ours, labelled) + OUT/compare_sheet.jpg
   render.py full    OUT F0 F1          -> OUT/fNNNN.png for F0 <= F < F1
 Use a separate OUT dir per agent (e.g. out/G2) so parallel runs never collide. Max ~15 frames per call for stills/compare.
+FPS and stage size come from ref/cuts.json (remake_analyze.py). Set REMAKE_URL to your served index.html.
 """
 import asyncio, sys, subprocess
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import imageio_ffmpeg
 from playwright.async_api import async_playwright
+from remake_common import H, meta, font, even
 
-H = Path(__file__).parent
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 import os
 URL = os.environ.get("REMAKE_URL", "http://localhost:8768/remake/index.html")  # set REMAKE_URL to your served index.html
-FPS = 24
+M = meta(); FPS, W, HT = M["fps"], M["w"], M["h"]
+TW, TH = 960, even(960 * HT / W)  # compare tile size
 
 
 async def run(frames, out: Path, fmt="png"):
     out.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
         b = await p.chromium.launch(args=["--disable-gpu-vsync", "--font-render-hinting=none"])
-        pg = await b.new_page(viewport={"width": 1920, "height": 1080}, device_scale_factor=1)
+        pg = await b.new_page(viewport={"width": W, "height": HT}, device_scale_factor=1)
         errs = []
         pg.on("pageerror", lambda e: errs.append(str(e)))
         pg.on("console", lambda m: errs.append("console: " + m.text) if m.type == "error" else None)
@@ -43,18 +45,18 @@ async def run(frames, out: Path, fmt="png"):
 
 def compare(frames, out: Path):
     paths = asyncio.run(run(frames, out))
-    try: font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 34)
-    except Exception: font = ImageFont.load_default()
+    fnt = font(34)
     tiles = []
     for F, p in zip(frames, paths):
-        ref = Image.open(H / f"ref/full/f{F:04d}.jpg").convert("RGB").resize((960, 540))
-        ours = Image.open(p).convert("RGB").resize((960, 540))
-        c = Image.new("RGB", (1930, 590), "white"); c.paste(ref, (0, 50)); c.paste(ours, (970, 50))
-        d = ImageDraw.Draw(c); d.text((10, 8), f"REF f{F}", fill="red", font=font); d.text((980, 8), f"OURS f{F}", fill="blue", font=font)
+        ref = Image.open(H / f"ref/full/f{F:04d}.jpg").convert("RGB").resize((TW, TH))
+        ours = Image.open(p).convert("RGB").resize((TW, TH))
+        c = Image.new("RGB", (2 * TW + 10, TH + 50), "white"); c.paste(ref, (0, 50)); c.paste(ours, (TW + 10, 50))
+        d = ImageDraw.Draw(c); d.text((10, 8), f"REF f{F}", fill="red", font=fnt); d.text((TW + 20, 8), f"OURS f{F}", fill="blue", font=fnt)
         cp = out / f"c_f{F:04d}.jpg"; c.save(cp, quality=85); tiles.append(c)
     cols = 2; rows = -(-len(tiles) // cols)
-    sheet = Image.new("RGB", (cols * 965, rows * 295), "white")
-    for i, t in enumerate(tiles): sheet.paste(t.resize((965, 295)), ((i % cols) * 965, (i // cols) * 295))
+    sw, sh = tiles[0].width // 2, tiles[0].height // 2
+    sheet = Image.new("RGB", (cols * sw, rows * sh), "white")
+    for i, t in enumerate(tiles): sheet.paste(t.resize((sw, sh)), ((i % cols) * sw, (i // cols) * sh))
     sheet.save(out / "compare_sheet.jpg", quality=80)
     print("compare ->", out / "compare_sheet.jpg")
 

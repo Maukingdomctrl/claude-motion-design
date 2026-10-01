@@ -1,27 +1,31 @@
-"""QA sheets: ref|ours per second (2 pages) + group seams (last 2 / first 2 frames) + old-brand colour scan."""
-from pathlib import Path
+"""QA sheets: ref|ours once per second (33 per page) + group seams (last 2 / first 2 frames of each group, from shots/groups.json)
++ old-brand colour scan. Frame count and fps come from ref/cuts.json."""
 import numpy as np
 from PIL import Image, ImageDraw
-H = Path(__file__).parent
+from remake_common import H, meta, groups, even
+M = meta(); N, FPS = M["n"], M["fps"]
+TW, TH = 480, even(480 * M["h"] / M["w"])
 Q = H / "out/qa"; Q.mkdir(parents=True, exist_ok=True)
 def pair(F):
-    r = Image.open(H / f"ref/full/f{F:04d}.jpg").convert("RGB").resize((480, 270))
-    o = Image.open(H / f"out/full/o_f{F:04d}.png").convert("RGB").resize((480, 270))
-    c = Image.new("RGB", (970, 290), "white"); c.paste(r, (0, 20)); c.paste(o, (490, 20))
+    r = Image.open(H / f"ref/full/f{F:04d}.jpg").convert("RGB").resize((TW, TH))
+    o = Image.open(H / f"out/full/o_f{F:04d}.png").convert("RGB").resize((TW, TH))
+    c = Image.new("RGB", (2 * TW + 10, TH + 20), "white"); c.paste(r, (0, 20)); c.paste(o, (TW + 10, 20))
     ImageDraw.Draw(c).text((4, 4), f"F{F}", fill="red"); return c
 def sheet(frames, name, cols=3):
-    tiles = [pair(F) for F in frames]; rows = -(-len(tiles) // cols)
-    s = Image.new("RGB", (cols * 970, rows * 290), "white")
-    for i, t in enumerate(tiles): s.paste(t, ((i % cols) * 970, (i // cols) * 290))
+    tiles = [pair(F) for F in frames]; rows = -(-len(tiles) // cols); w, h = tiles[0].size
+    s = Image.new("RGB", (cols * w, rows * h), "white")
+    for i, t in enumerate(tiles): s.paste(t, ((i % cols) * w, (i // cols) * h))
     s.save(Q / name, quality=78)
-secs = list(range(0, 1557, 24))
-sheet(secs[:33], "persec_1.jpg"); sheet(secs[33:], "persec_2.jpg")
-sheet([526, 527, 528, 529, 902, 903, 904, 905, 906, 907, 1152, 1153, 1154, 1155], "seams.jpg", cols=2)
-# old-brand colour scan: reddish/orange saturated pixels in ours
+secs = [round(s * FPS) for s in range(int(N / FPS) + 1) if round(s * FPS) < N]
+for p in range(0, len(secs), 33): sheet(secs[p:p + 33], f"persec_{p // 33 + 1}.jpg")
+seams = [F for _, (a, b) in sorted(groups().items())[1:] for F in range(a - 2, a + 2)]
+if seams: sheet(seams, "seams.jpg", cols=2)
+else: print("no shots/groups.json: run remake_stub.py to get seams.jpg")
+# old-brand colour scan: reddish/orange saturated pixels in ours (edit the mask for your reference's brand colour)
 bad = []
-for F in range(0, 1557, 4):
-    a = np.asarray(Image.open(H / f"out/full/o_f{F:04d}.png").convert("RGB").resize((480, 270)), dtype=np.int16)
+for F in range(0, N, 4):
+    a = np.asarray(Image.open(H / f"out/full/o_f{F:04d}.png").convert("RGB").resize((TW, TH)), dtype=np.int16)
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     m = (r > 180) & (r - g > 60) & (r - b > 60) & (g > 60)
-    if m.sum() > 150: bad.append((F, int(m.sum())))
+    if m.sum() > 150 * TW * TH / (480 * 270): bad.append((F, int(m.sum())))
 print("old-brand-colour frames:", bad[:40], "count", len(bad))

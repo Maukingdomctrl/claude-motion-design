@@ -1,0 +1,261 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Just adopt</title>
+<style>
+@font-face{font-family:'Geist';src:url(fonts/geist-latin.woff2) format('woff2');font-weight:100 900;font-display:block}
+html,body{margin:0;background:#16141f}
+#stage{position:relative;width:1080px;height:1350px;overflow:hidden;background:#f7f1e8;font-family:'Geist',-apple-system,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.abs{position:absolute;left:0;top:0;width:1080px;height:1350px}
+.line{position:absolute;left:0;right:0;text-align:center;white-space:nowrap;letter-spacing:-0.025em;line-height:1.1}
+.w{display:inline-block;overflow:hidden;vertical-align:top;padding:0 .03em .1em}
+.wi{display:inline-block}
+</style></head>
+<body><div id="stage"></div>
+<script>
+// ---------- constants (all declared before the first seek) ----------
+const W = 1080, H = 1350, BEAT = 0.6, T = 18;
+const C = { ink: '#1d1b26', dark: '#16141f', cream: '#f7f1e8', ginger: '#f29a4a', gingerD: '#d97a2b', belly: '#fde3c0',
+  pink: '#ff8fa3', coral: '#ff5d73', butter: '#ffe39a', mint: '#bfead2', blush: '#ffd3dc', yarn: '#7c8cff', yarnD: '#4f5bd5',
+  glow: '#e4f76a', white: '#fffaf2' };
+const CAT = { x: 540, y: 1110, s: 2.7 };               // S1-S3 cat: feet position + scale
+const EYE_Y = CAT.y - 128 * CAT.s;                     // head centre (eyes) in screen space
+const HEART = { x: 540, y: CAT.y - 186 * CAT.s - 105 };// heart above the ears = camera focus = flood origin
+const HP = 'M0,35 C-45,5 -55,-25 -30,-40 C-15,-48 -3,-38 0,-28 C3,-38 15,-48 30,-40 C55,-25 45,5 0,35 Z';
+const MT = [9.6, 10.8, 12.0, 13.2];                    // montage item starts
+const MBG = [C.butter, C.mint, C.blush, C.cream];
+const MW = ['Naps.', 'Play.', 'Purrs.', 'Love.'];
+const END = 14.4;
+const WIPE = { x: 540, y: 900 };                       // montage / end wipes grow from the cat
+const WIPE_R = Math.hypot(540, 900) * 1.05;            // clears the farthest corner
+
+// ---------- math ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const inv = (a, b, t) => clamp((t - a) / (b - a));
+const io = x => x <= 0 ? 0 : x >= 1 ? 1 : x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const o5 = x => x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 5);
+const expo = x => x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+// closed-form spring step response (under-damped), tau in seconds
+function step(tau, [f, z]) {
+  if (tau <= 0) return 0;
+  const w = 2 * Math.PI * f, wd = w * Math.sqrt(1 - z * z);
+  return 1 - Math.exp(-z * w * tau) * (Math.cos(wd * tau) + z / Math.sqrt(1 - z * z) * Math.sin(wd * tau));
+}
+const SNAPPY = [2.85, 0.84], DEF = [2.07, 0.97], HEAVY = [1.74, 0.97], PLAY = [2.13, 0.45];
+const bump = (t, a, b) => { const p = inv(a, b, t); return p > 0 && p < 1 ? Math.sin(Math.PI * p) : 0; };
+const blink = (t, tb) => 1 - 0.94 * bump(t, tb, tb + 0.18);
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const R1 = mulberry32(7), DUST = Array.from({ length: 34 }, () => ({ x: R1() * W, y: R1() * H, r: 1.5 + R1() * 2.5, sp: 0.4 + R1() * 0.8, ph: R1() * 6.28 }));
+const R2 = mulberry32(11), LOVE = Array.from({ length: 7 }, (_, j) => ({ x: 540 + (R2() - 0.5) * 760, d: j * 0.12, s: 0.55 + R2() * 0.45, ph: R2() * 6.28 }));
+// beat punches after the drop: +0.012 per beat, +0.03 per bar, exp decay
+function punch(t) {
+  let v = 0;
+  for (let k = 0; k < 12; k++) {
+    const b = 7.2 + k * BEAT, bar = k % 4 === 0;
+    if (t >= b) v += (bar ? 0.03 : 0.012) * Math.exp(-(t - b) / (bar ? 0.25 : 0.15));
+  }
+  return v;
+}
+const pulses = (t, bs, a = 0.14) => bs.reduce((v, b) => v + (t >= b ? a * Math.exp(-(t - b) / 0.12) : 0), 0);
+
+// ---------- text: masked word rise ----------
+function words(lines, o) {
+  const { t, tin, tout = 1e9, y, size, weight = 700, color, accent = [], stagger = 0.055, lineDelay = 0.22, dur = 0.55 } = o;
+  let html = '', idx = 0;
+  lines.forEach((ln, li) => {
+    const spans = ln.split(' ').map(wd => {
+      const i = idx++, a = tin + i * stagger + li * lineDelay;
+      const e = expo(inv(a, a + dur, t)), q = io(inv(tout + i * 0.03, tout + i * 0.03 + 0.3, t));
+      const ty = (1 - e) * 108 - q * 108, rot = (1 - e) * 7 - q * 4;
+      const acc = accent.includes(wd)
+        ? `background:linear-gradient(90deg,${C.coral},#ff9a3c,${C.coral});background-size:200% 100%;background-position:${(t * 60) % 200}% 0;-webkit-background-clip:text;background-clip:text;color:transparent;`
+        : '';
+      return `<span class="w"><span class="wi" style="transform:translateY(${ty.toFixed(2)}%) rotate(${rot.toFixed(2)}deg);${acc}">${wd}</span></span>`;
+    }).join(' ');
+    html += `<div class="line" style="top:${y + li * size * 1.08}px;font-size:${size}px;font-weight:${weight};color:${color}">${spans}</div>`;
+  });
+  return html;
+}
+
+// ---------- cat ----------
+function headSVG(o = {}) {
+  const { eye = 'open', open = 1, look = 0, ear = 0 } = o, ink = C.ink, sw = 3.5;
+  let s = `<g transform="rotate(${(-ear * 16).toFixed(2)} -25 -20)"><path d="M -42 -12 L -36 -58 L -8 -34 Z" fill="${C.ginger}" stroke="${ink}" stroke-width="${sw}" stroke-linejoin="round"/><path d="M -34 -22 L -31 -47 L -15 -34 Z" fill="${C.pink}"/></g>`;
+  s += `<path d="M 42 -12 L 36 -58 L 8 -34 Z" fill="${C.ginger}" stroke="${ink}" stroke-width="${sw}" stroke-linejoin="round"/><path d="M 34 -22 L 31 -47 L 15 -34 Z" fill="${C.pink}"/>`;
+  s += `<ellipse cx="0" cy="0" rx="46" ry="40" fill="${C.ginger}" stroke="${ink}" stroke-width="${sw}"/>`;
+  s += `<g stroke="${C.gingerD}" stroke-width="4" stroke-linecap="round"><path d="M -10 -37 L -8 -26"/><path d="M 0 -39 L 0 -27"/><path d="M 10 -37 L 8 -26"/></g>`;
+  s += `<circle cx="-29" cy="15" r="7" fill="${C.pink}" opacity=".45"/><circle cx="29" cy="15" r="7" fill="${C.pink}" opacity=".45"/>`;
+  for (const sx of [-1, 1]) {
+    const ex = sx * 17;
+    if (eye === 'open') {
+      const ry = 10 * Math.max(open, 0.06);
+      s += `<ellipse cx="${ex + look}" cy="0" rx="7.5" ry="${ry.toFixed(2)}" fill="${ink}"/>`;
+      if (open > 0.5) s += `<circle cx="${ex + look + 2.5}" cy="${(-ry * 0.35).toFixed(2)}" r="2.4" fill="#fff"/>`;
+    } else if (eye === 'happy') {
+      s += `<path d="M ${ex - 8} 3 Q ${ex} -7 ${ex + 8} 3" fill="none" stroke="${ink}" stroke-width="4" stroke-linecap="round"/>`;
+    } else {
+      s += `<path d="M ${ex - 8} -1 Q ${ex} 7 ${ex + 8} -1" fill="none" stroke="${ink}" stroke-width="4" stroke-linecap="round"/>`;
+    }
+  }
+  s += `<path d="M -6 13 L 6 13 L 0 19.5 Z" fill="${C.pink}" stroke="${ink}" stroke-width="2" stroke-linejoin="round"/>`;
+  s += `<path d="M -9 25 Q -4.5 29 0 22 Q 4.5 29 9 25" fill="none" stroke="${ink}" stroke-width="2.5" stroke-linecap="round"/>`;
+  s += `<g stroke="${ink}" stroke-width="2" stroke-linecap="round" opacity=".7"><path d="M -24 16 L -64 10"/><path d="M -24 22 L -64 26"/><path d="M 24 16 L 64 10"/><path d="M 24 22 L 64 26"/></g>`;
+  return s;
+}
+function tube(d, w) { // outlined stroke (tail, leg)
+  return `<path d="${d}" fill="none" stroke="${C.ink}" stroke-width="${w + 7}" stroke-linecap="round"/><path d="${d}" fill="none" stroke="${C.ginger}" stroke-width="${w}" stroke-linecap="round"/>`;
+}
+function catSit(o) {
+  const { x, y, s = 1, tail = 0, paw = 0, tilt = 0, squash = 0, jx = 0 } = o, ink = C.ink;
+  let b = tube(`M 34 -14 C 78 -8, 96 -46, ${(80 + tail * 16).toFixed(2)} ${(-88 + Math.abs(tail) * 5).toFixed(2)}`, 16);
+  b += `<path d="M -46 0 C -56 -40, -40 -95, 0 -100 C 40 -95, 56 -40, 46 0 Z" fill="${C.ginger}" stroke="${ink}" stroke-width="3.5" stroke-linejoin="round"/>`;
+  b += `<ellipse cx="0" cy="-36" rx="22" ry="30" fill="${C.belly}"/>`;
+  b += `<ellipse cx="-17" cy="-3" rx="14" ry="9" fill="${C.ginger}" stroke="${ink}" stroke-width="3"/>`;
+  const px = 17 + 14 * paw, py = -3 - 62 * paw;
+  if (paw > 0.02) b += tube(`M 24 -34 L ${px.toFixed(2)} ${py.toFixed(2)}`, 18);
+  b += `<ellipse cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" rx="14" ry="9" fill="${C.ginger}" stroke="${ink}" stroke-width="3" transform="rotate(${(-35 * paw).toFixed(2)} ${px.toFixed(2)} ${py.toFixed(2)})"/>`;
+  b += `<g transform="translate(0 -128) rotate(${tilt.toFixed(2)})">${headSVG(o)}</g>`;
+  return `<g transform="translate(${(x + jx).toFixed(2)} ${y.toFixed(2)}) scale(${(s * (1 + squash * 0.5)).toFixed(4)} ${(s * (1 - squash)).toFixed(4)})">${b}</g>`;
+}
+function catCurl(o) {
+  const { x, y, s = 1, breath = 0 } = o, ink = C.ink;
+  let b = `<ellipse cx="10" cy="${(-44 * (1 + breath)).toFixed(2)}" rx="80" ry="${(44 * (1 + breath)).toFixed(2)}" fill="${C.ginger}" stroke="${ink}" stroke-width="3.5"/>`;
+  b += `<g stroke="${C.gingerD}" stroke-width="5" stroke-linecap="round" fill="none"><path d="M 20 -84 Q 26 -70 22 -58"/><path d="M 42 -80 Q 48 -68 44 -56"/><path d="M 62 -70 Q 66 -60 62 -50"/></g>`;
+  b += tube('M 86 -26 C 92 6, 0 10, -64 0', 16);
+  b += `<g transform="translate(-52 -50) rotate(-14) scale(.92)">${headSVG({ eye: 'sleep' })}</g>`;
+  return `<g transform="translate(${x} ${y}) scale(${s})">${b}</g>`;
+}
+const shadow = (x, y, s) => `<ellipse cx="${x}" cy="${y + 2}" rx="${(62 * s).toFixed(1)}" ry="${(9 * s).toFixed(1)}" fill="${C.ink}" opacity=".12"/>`;
+const heart = (x, y, s, fill = C.coral, op = 1) => s > 0.001 ? `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${s.toFixed(4)})" opacity="${op.toFixed(3)}"><path d="${HP}" fill="${fill}" stroke="${C.ink}" stroke-width="${(3.5 / Math.max(s, 0.3)).toFixed(2)}" stroke-linejoin="round"/></g>` : '';
+const paw = (x, y, s, rot, fill, op) => `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${rot}) scale(${s.toFixed(3)})" fill="${fill}" opacity="${op.toFixed(3)}"><ellipse cx="0" cy="8" rx="13" ry="11"/><circle cx="-13" cy="-8" r="5.5"/><circle cx="-4.5" cy="-15" r="5.5"/><circle cx="4.5" cy="-15" r="5.5"/><circle cx="13" cy="-8" r="5.5"/></g>`;
+const svg = inner => `<svg class="abs" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`;
+const wipe = (r, cx, cy, inner, z) => `<div class="abs" style="z-index:${z};clip-path:circle(${r.toFixed(1)}px at ${cx}px ${cy}px)">${inner}</div>`;
+
+// ---------- scenes ----------
+function sceneIntro(t) { // S1-S3 (0 - 7.6): cream world under a dark overlay with a spotlight hole
+  let h = '';
+  const z = Math.exp(lerp(0, Math.log(1.32), io(inv(6.0, 7.2, t))));
+  const open = o5(inv(0.25, 0.7, t)) * blink(t, 1.75) * blink(t, 4.05) * blink(t, 5.2);
+  const happy = t >= 5.29;
+  const tilt = 8 * step(t - 3.0, PLAY) - 14 * step(t - 5.25, PLAY);
+  const ear = bump(t, 3.6, 3.85);
+  const hs = t < 5.1 ? 0 : 1.7 * (step(t - 5.1, PLAY) + pulses(t, [5.4, 6.0, 6.6]));
+  let w = shadow(CAT.x, CAT.y, CAT.s);
+  w += catSit({ x: CAT.x, y: CAT.y, s: CAT.s, tail: Math.sin(2 * Math.PI * t / 2.4), tilt, ear, open, eye: happy ? 'happy' : 'open' });
+  w += heart(HEART.x, HEART.y, hs);
+  h += `<div class="abs" style="z-index:1;background:${C.cream};transform-origin:${HEART.x}px ${HEART.y}px;transform:scale(${z.toFixed(4)})">${svg(w)}</div>`;
+  // dark overlay with spotlight (2.4) that floods to the corners at 4.8
+  const R = t < 2.4 ? 0 : t < 4.8 ? 540 * step(t - 2.4, [1.6, 0.8]) : lerp(540, 1750, expo(inv(4.8, 5.15, t)));
+  if (t < 5.15) h += `<div class="abs" style="z-index:2;background:radial-gradient(circle at 540px 880px, rgba(22,20,31,0) ${(R * 0.74).toFixed(1)}px, rgba(22,20,31,1) ${R.toFixed(1)}px)"></div>`;
+  // dust motes
+  if (t < 5.15) {
+    const fade = 1 - inv(4.8, 5.1, t);
+    h += `<div class="abs" style="z-index:3">${svg(DUST.map(p => {
+      const y = ((p.y - t * p.sp * 40) % H + H) % H, x = p.x + Math.sin(t * 0.8 + p.ph) * 12;
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${p.r}" fill="${C.cream}" opacity="${(0.22 * fade).toFixed(3)}"/>`;
+    }).join(''))}</div>`;
+  }
+  // glowing eyes (S1), become the cat's own eyes as the light arrives
+  const g = 1 - inv(2.45, 2.8, t);
+  if (g > 0) {
+    const ry = 10 * CAT.s * Math.max(open, 0.04);
+    h += `<div class="abs" style="z-index:4;opacity:${g.toFixed(3)}">${svg(`<defs><filter id="gb" x="-2" y="-2" width="5" height="5"><feGaussianBlur stdDeviation="14"/></filter></defs>` +
+      [-1, 1].map(sx => { const ex = CAT.x + sx * 17 * CAT.s;
+        return `<ellipse cx="${ex}" cy="${EYE_Y}" rx="${7.5 * CAT.s * 1.6}" ry="${(ry * 1.6).toFixed(2)}" fill="${C.glow}" opacity="${(0.35 + 0.08 * Math.sin(t * 5)).toFixed(3)}" filter="url(#gb)"/>` +
+          `<ellipse cx="${ex}" cy="${EYE_Y}" rx="${7.5 * CAT.s}" ry="${ry.toFixed(2)}" fill="${C.glow}"/>` +
+          `<ellipse cx="${ex}" cy="${EYE_Y}" rx="${2.6 * CAT.s}" ry="${(ry * 0.82).toFixed(2)}" fill="${C.dark}"/>`; }).join(''))}</div>`;
+  }
+  // copy
+  h += `<div class="abs" style="z-index:5">`;
+  h += words(['Somewhere,', 'a cat is waiting.'], { t, tin: 0.35, tout: 2.3, y: 190, size: 92, color: C.cream });
+  h += words(['for someone', 'like you.'], { t, tin: 2.55, tout: 4.62, y: 190, size: 92, color: C.cream, accent: ['you.'] });
+  h += words(['Make room', 'on your sofa.'], { t, tin: 5.3, tout: 6.75, y: 190, size: 92, color: C.ink, accent: ['sofa.'] });
+  h += `</div>`;
+  return h;
+}
+function sceneDrop(t) { // S4 (7.2 - 9.6+): coral flood out of the heart, "Just adopt.", cat pops up
+  let inner = `<div class="abs" style="background:${C.coral}"></div>`;
+  const slam = (wd, tw, y) => {
+    if (t < tw) return '';
+    const sc = 1 + 0.38 * (1 - step(t - tw, SNAPPY)), op = inv(tw, tw + 0.05, t);
+    return `<div class="line" style="top:${y}px;font-size:236px;font-weight:800;color:${C.white};opacity:${op.toFixed(3)};transform:scale(${sc.toFixed(4)});transform-origin:540px 120px">${wd}</div>`;
+  };
+  inner += slam('Just', 7.22, 330) + slam('adopt.', 7.8, 560);
+  if (t >= 8.4) {
+    const up = step(t - 8.4, PLAY), wave = bump(t, 9.0, 9.45);
+    inner += svg(catSit({ x: 540, y: 1350 + 60 + 560 * (1 - up), s: 2.6, eye: 'happy', paw: wave, tail: Math.sin(2 * Math.PI * t / 1.2) }));
+  }
+  const r = lerp(55 * 1.7 * 1.32, 1030, expo(inv(7.2, 7.52, t)));
+  return wipe(r, HEART.x, HEART.y, inner, 10);
+}
+function montageItem(k, t) {
+  const tk = MT[k], lt = t - tk;
+  let inner = `<div class="abs" style="background:${MBG[k]}"></div>`, g = '';
+  const fx = 540, fy = 1190, s = 3.0;
+  if (k === 0) { // Naps
+    g += shadow(530, fy, 3.8) + catCurl({ x: 530, y: fy, s: 3.1, breath: 0.035 * Math.sin(2 * Math.PI * lt / 1.2) });
+    for (let j = 0; j < 3; j++) {
+      const p = inv(0.12 + j * 0.28, 0.12 + j * 0.28 + 0.95, lt);
+      if (p > 0 && p < 1) g += `<text x="${(380 + 80 * p + j * 30).toFixed(1)}" y="${(960 - 230 * p).toFixed(1)}" font-family="Geist" font-weight="800" font-size="${64 + 22 * j}" fill="${C.ink}" opacity="${Math.sin(Math.PI * p).toFixed(3)}">z</text>`;
+    }
+  } else if (k === 1) { // Play
+    const bat = bump(t, tk + 0.5, tk + 0.85);
+    const bx = lerp(1220, 820, o5(inv(tk, tk + 0.55, t))) + 80 * o5(inv(tk + 0.68, tk + 1.1, t));
+    const by = fy - 54 - 90 * bump(t, tk + 0.68, tk + 1.05);
+    const rot = -(1220 - bx) / 54 * 57.3;
+    g += shadow(fx, fy, s) + catSit({ x: fx, y: fy, s, paw: bat, look: 3, tail: Math.sin(2 * Math.PI * t / 1.2) });
+    g += `<path d="M ${bx + 30} ${by + 20} C ${bx + 120} ${fy + 10}, ${bx + 200} ${fy - 30}, 1140 ${fy - 10}" fill="none" stroke="${C.yarnD}" stroke-width="5" stroke-linecap="round"/>`;
+    g += `<g transform="translate(${bx.toFixed(1)} ${by.toFixed(1)}) rotate(${rot.toFixed(1)}) scale(1.35)"><circle r="40" fill="${C.yarn}" stroke="${C.ink}" stroke-width="3.5"/>` +
+      `<g fill="none" stroke="${C.yarnD}" stroke-width="4" stroke-linecap="round"><path d="M -30 -18 Q 0 -40 30 -16"/><path d="M -36 2 Q 0 -22 36 4"/><path d="M -28 22 Q 0 0 28 24"/></g></g>`;
+  } else if (k === 2) { // Purrs
+    const cy = fy - 55 * s;
+    for (const sx of [-1, 1]) for (let i = 0; i < 3; i++) {
+      const ph = ((lt * 2.2 + i / 3) % 1 + 1) % 1, r = 180 + 130 * ph, a = 0.5;
+      const x1 = fx + sx * r * Math.cos(a), y1 = cy - r * Math.sin(a), x2 = fx + sx * r * Math.cos(a), y2 = cy + r * Math.sin(a);
+      g += `<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 ${sx > 0 ? 1 : 0} ${x2.toFixed(1)} ${y2.toFixed(1)}" fill="none" stroke="${C.ink}" stroke-width="7" stroke-linecap="round" opacity="${(0.55 * Math.sin(Math.PI * ph)).toFixed(3)}"/>`;
+    }
+    g += shadow(fx, fy, s) + catSit({ x: fx, y: fy, s, eye: 'happy', jx: 2.2 * Math.sin(2 * Math.PI * 22 * t), tail: 0.4 * Math.sin(2 * Math.PI * t / 1.2) });
+  } else { // Love
+    g += shadow(fx, fy, s) + catSit({ x: fx, y: fy, s, eye: 'happy', tilt: 10 * step(lt - 0.1, PLAY), tail: Math.sin(2 * Math.PI * t / 1.2) });
+    LOVE.forEach(p => {
+      const q = inv(p.d, p.d + 0.95, lt);
+      if (q > 0 && q < 1) g += heart(p.x + 30 * Math.sin(q * 5 + p.ph), 1080 - 560 * o5(q), 1.6 * p.s * (0.6 + 0.4 * step(lt - p.d, PLAY)), C.coral, Math.sin(Math.PI * Math.min(1, q * 1.4)));
+    });
+  }
+  inner += svg(g);
+  inner += words([MW[k]], { t, tin: tk + 0.06, y: 170, size: 200, weight: 800, color: C.ink });
+  return wipe(expo(inv(tk, tk + 0.32, t)) * WIPE_R, WIPE.x, WIPE.y, inner, 20 + k);
+}
+function sceneEnd(t) {
+  const z = 1 + 0.03 * io(inv(END, T, t));
+  let inner = `<div class="abs" style="background:${C.coral}"></div>`;
+  let g = '';
+  for (let j = 0; j < 9; j++) {
+    const tj = 15.0 + j * 0.3; if (t < tj) continue;
+    const sc = 0.6 + 0.4 * step(t - tj, SNAPPY);
+    g += paw(95 + j * 111, 1290 + (j % 2 ? -24 : 16), 2.3 * sc, 90, C.white, 0.85 * inv(tj, tj + 0.06, t));
+  }
+  const sq = 0.16 * Math.exp(-(t - 14.55) / 0.12) * Math.sin(Math.max(0, t - 14.55) * 22) * (t > 14.55 ? 1 : 0);
+  g += shadow(540, 1170, 2.6) + catSit({ x: 540, y: 1170, s: 2.6, squash: sq, open: blink(t, 16.6), tail: Math.sin(2 * Math.PI * t / 2.4) });
+  inner += `<div class="abs" style="transform-origin:540px 675px;transform:scale(${z.toFixed(4)})">${svg(g)}`;
+  inner += words(['Just adopt.'], { t, tin: 14.5, y: 250, size: 150, weight: 800, color: C.white });
+  inner += words(['Find your cat at a', 'local shelter.'], { t, tin: 15.0, y: 455, size: 66, weight: 600, color: '#fff1e6', stagger: 0.045, lineDelay: 0.12 });
+  inner += `</div>`;
+  return wipe(expo(inv(END, END + 0.32, t)) * WIPE_R, WIPE.x, WIPE.y, inner, 40);
+}
+
+const stage = document.getElementById('stage');
+window.seek = t => {
+  t = clamp(t, 0, T);
+  let h = '';
+  if (t < 7.6) h += sceneIntro(t);
+  if (t >= 7.2 && t < MT[0] + 0.4) h += sceneDrop(t);
+  MT.forEach((tk, k) => { const next = k < 3 ? MT[k + 1] : END; if (t >= tk && t < next + 0.4) h += montageItem(k, t); });
+  if (t >= END) h += sceneEnd(t);
+  const p = t >= 7.2 && t < END ? punch(t) : 0;
+  stage.innerHTML = `<div class="abs" style="transform-origin:540px 675px;transform:scale(${(1 + p).toFixed(4)})">${h}</div>`;
+};
+(async () => {
+  await document.fonts.load('800 100px Geist'); await document.fonts.load('700 100px Geist'); await document.fonts.ready;
+  window.seek(0); window.ready = true;
+})();
+</script></body></html>

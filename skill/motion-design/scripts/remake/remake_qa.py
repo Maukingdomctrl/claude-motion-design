@@ -2,13 +2,13 @@
 + old-brand colour scan. Frame count and fps come from ref/cuts.json."""
 import numpy as np
 from PIL import Image, ImageDraw
-from remake_common import H, meta, groups, even
+from remake_common import H, meta, groups, even, frame
 M = meta(); N, FPS = M["n"], M["fps"]
 TW, TH = 480, even(480 * M["h"] / M["w"])
 Q = H / "out/qa"; Q.mkdir(parents=True, exist_ok=True)
 def pair(F):
-    r = Image.open(H / f"ref/full/f{F:04d}.jpg").convert("RGB").resize((TW, TH))
-    o = Image.open(H / f"out/full/o_f{F:04d}.png").convert("RGB").resize((TW, TH))
+    r = Image.open(H / "ref/full" / frame("f", F, "jpg")).convert("RGB").resize((TW, TH))
+    o = Image.open(H / "out/full" / frame("o_f", F, "png")).convert("RGB").resize((TW, TH))
     c = Image.new("RGB", (2 * TW + 10, TH + 20), "white"); c.paste(r, (0, 20)); c.paste(o, (TW + 10, 20))
     ImageDraw.Draw(c).text((4, 4), f"F{F}", fill="red"); return c
 def sheet(frames, name, cols=3):
@@ -24,7 +24,7 @@ else: print("no shots/groups.json: run remake_stub.py to get seams.jpg")
 # old-brand colour scan: reddish/orange saturated pixels in ours (edit the mask for your reference's brand colour)
 bad = []
 for F in range(0, N, 4):
-    a = np.asarray(Image.open(H / f"out/full/o_f{F:04d}.png").convert("RGB").resize((TW, TH)), dtype=np.int16)
+    a = np.asarray(Image.open(H / "out/full" / frame("o_f", F, "png")).convert("RGB").resize((TW, TH)), dtype=np.int16)
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     m = (r > 180) & (r - g > 60) & (r - b > 60) & (g > 60)
     if m.sum() > 150 * TW * TH / (480 * 270): bad.append((F, int(m.sum())))

@@ -1,8 +1,9 @@
 """render.py — Playwright renderer for the frame-locked remake.
 usage:
-  render.py stills  OUT F1 F2 ...      -> OUT/o_FNNNN.png
-  render.py compare OUT F1 F2 ...      -> OUT/c_FNNNN.jpg (ref | ours, labelled) + OUT/compare_sheet.jpg
-  render.py full    OUT F0 F1          -> OUT/fNNNN.png for F0 <= F < F1
+  render.py stills  OUT F1 F2 ...      -> OUT/o_fNNNNN.png
+  render.py compare OUT F1 F2 ...      -> OUT/c_fNNNNN.jpg (ref | ours, labelled) + OUT/compare_sheet.jpg
+  render.py full    OUT F0 F1          -> OUT/o_fNNNNN.png for F0 <= F < F1
+Frame numbers are zero-padded to the width in ref/cuts.json (5 digits; 4 in projects analysed before that was recorded).
 Use a separate OUT dir per agent (e.g. out/G2) so parallel runs never collide. Max ~15 frames per call for stills/compare.
 FPS and stage size come from ref/cuts.json (remake_analyze.py). Set REMAKE_URL to your served index.html.
 """
@@ -11,7 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 import imageio_ffmpeg
 from playwright.async_api import async_playwright
-from remake_common import H, meta, font, even
+from remake_common import H, meta, font, even, frame
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 import os
@@ -35,7 +36,7 @@ async def run(frames, out: Path, fmt="png"):
         for F in frames:
             await pg.evaluate(f"window.seek({F / FPS + 1e-6})")
             await pg.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
-            pth = out / f"o_f{F:04d}.png"
+            pth = out / frame("o_f", F, "png")
             await el.screenshot(path=str(pth))
             paths.append(pth)
         await b.close()
@@ -48,11 +49,11 @@ def compare(frames, out: Path):
     fnt = font(34)
     tiles = []
     for F, p in zip(frames, paths):
-        ref = Image.open(H / f"ref/full/f{F:04d}.jpg").convert("RGB").resize((TW, TH))
+        ref = Image.open(H / "ref/full" / frame("f", F, "jpg")).convert("RGB").resize((TW, TH))
         ours = Image.open(p).convert("RGB").resize((TW, TH))
         c = Image.new("RGB", (2 * TW + 10, TH + 50), "white"); c.paste(ref, (0, 50)); c.paste(ours, (TW + 10, 50))
         d = ImageDraw.Draw(c); d.text((10, 8), f"REF f{F}", fill="red", font=fnt); d.text((TW + 20, 8), f"OURS f{F}", fill="blue", font=fnt)
-        cp = out / f"c_f{F:04d}.jpg"; c.save(cp, quality=85); tiles.append(c)
+        cp = out / frame("c_f", F, "jpg"); c.save(cp, quality=85); tiles.append(c)
     cols = 2; rows = -(-len(tiles) // cols)
     sw, sh = tiles[0].width // 2, tiles[0].height // 2
     sheet = Image.new("RGB", (cols * sw, rows * sh), "white")

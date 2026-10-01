@@ -1,18 +1,18 @@
-"""sync.py — build the deliverables from full-render frames in out/full/o_fNNNN.png.
+"""sync.py — build the deliverables from full-render frames in out/full/o_fNNNNN.png.
   sync.py encode   -> out/remake_silent.mp4 (reference fps from ref/cuts.json, h264 BT.709) and out/remake.mp4 (muxed with out/mix.wav if present)
   sync.py split    -> out/split_screen.mp4 : REF left | OURS right, labelled "original" / "opus 5.5 copy", white bg (the X post format)
   sync.py stacked  -> out/sync_check.mp4 : REF top / OURS bottom, frame-locked, for QA
 """
 import subprocess, sys
 import imageio_ffmpeg
-from remake_common import H, REF, meta, font, even
+from remake_common import H, REF, meta, font, even, frame_pattern
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 OUT = H / "out"; FULL = OUT / "full"
 M = meta()
 ENC = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16", "-preset", "slow", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-movflags", "+faststart"]
 mode = sys.argv[1]
 if mode == "encode":
-    subprocess.run([FF, "-v", "error", "-y", "-framerate", str(M["fps"]), "-i", str(FULL / "o_f%04d.png"), *ENC, str(OUT / "remake_silent.mp4")], check=True)
+    subprocess.run([FF, "-v", "error", "-y", "-framerate", str(M["fps"]), "-i", str(FULL / frame_pattern("o_f", "png")), *ENC, str(OUT / "remake_silent.mp4")], check=True)
     mix = OUT / "mix.wav"
     if mix.exists():
         subprocess.run([FF, "-v", "error", "-y", "-i", str(OUT / "remake_silent.mp4"), "-i", str(mix), "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest", "-movflags", "+faststart", str(OUT / "remake.mp4")], check=True)

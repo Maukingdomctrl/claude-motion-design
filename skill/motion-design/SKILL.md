@@ -35,7 +35,7 @@ Workdir: `~/Desktop/Howseen AI/howseen-video/` (one folder per film). Every film
 
 ## 3. Render (scripts/render_template.py)
 - Serve the folder over HTTP (`python -m http.server 876x --directory …`, background), Playwright Chromium, viewport = video size (1920×1080, 1080×1350 for LinkedIn 4:5, 1440×1440 square).
-- `probe t1 t2…` → `probe/sheet.png`; `beats` → one frame per beat; `full` → **N subframes per frame blended with `tmix`** (6-8 for fast moves, 4 = ghosting), 60 fps; `pops` → frame-diff spikes > 3× neighbours (intentional beat cuts show up too: say so, don't hide).
+- `probe t1 t2…` → `probe/sheet.png`; `beats` → one frame per beat in `beats/beats.png` (separate folder, so it doesn't wipe the probe sheet); `full` → **N subframes per frame blended with `tmix`** (6-8 for fast moves, 4 = ghosting), 60 fps; `pops` → frame-diff spikes > 3× neighbours (intentional beat cuts show up too: say so, don't hide).
 - Pass the film's settings as flags instead of editing the script (defaults = LinkedIn 4:5, 24 s, 60 fps, 8 subframes, 120 BPM): `--size 1920x1080 --duration 15 --fps 60 --subframes 8 --crf 14 --url http://localhost:8765/film.html --bpm 130 --beat-offset 0.45 --work-dir sub_v2`; `pops [video]` takes an optional path.
 - Use a separate `sub*/` folder per version so parallel renders don't clash. ~1-1.5 min of wall time per second of film at 8 subframes; run long renders in the background.
 - Final encode: `scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=yuv420p`, `-color_range tv -colorspace bt709`, libx264 crf 16, AAC 256k, `+faststart`.
